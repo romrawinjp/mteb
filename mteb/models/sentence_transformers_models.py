@@ -661,3 +661,28 @@ gtr_t5_base = ModelMeta(
         "Community QA": ["train"],
     },
 )
+
+clip_training_datasets = {
+    # find-it 
+}
+
+clip_vit_l_14 = ModelMeta(
+    name="sentence-transformers/clip-ViT-L-14",
+    languages=["eng-Latn"],  # in format eng-Latn
+    open_weights=True,
+    revision="3b12140ad0f9750045e404f187cfccd04bcaf250",
+    release_date="2022-04-12",
+    modalities=["image", "text"],
+    n_parameters=428_000_000,
+    memory_usage_mb=890,
+    embed_dim=768,
+    license="apache-2.0",
+    max_tokens=512,
+    reference="https://huggingface.co/sentence-transformers/clip-ViT-L-14",
+    similarity_fn_name="cosine",
+    framework=["Sentence Transformers", "PyTorch"],
+    use_instructions=False,
+    public_training_code=None,
+    public_training_data=None,
+    training_datasets=clip_training_datasets
+)

@@ -14,7 +14,9 @@ import pytrec_eval
 import torch
 from datasets import Dataset
 from PIL import Image
+from tqdm import tqdm
 from torch.utils.data import DataLoader
+from torchvision.transforms.functional import to_pil_image
 
 from mteb.encoder_interface import Encoder, PromptType
 from mteb.requires_package import requires_image_dependencies
@@ -85,6 +87,7 @@ class Any2AnyDenseRetrievalExactSearch:
         # Model is class that provides get_text_embeddings() and get_image_embeddings()
         self.model = model
         self.encode_kwargs = encode_kwargs
+        self.image_model = kwargs.get("image_model", None)
         if transform is None:
             self.transform = get_default_transform()
 
@@ -106,6 +109,70 @@ class Any2AnyDenseRetrievalExactSearch:
 
         if self.previous_results is not None:
             self.previous_results = self.load_results_file()
+
+    def encode_external_image_model(self, 
+                                    images: Dataset,
+                                    batch_size: int = 32):
+        ## (Optional) load external image_model
+        from sentence_transformers import SentenceTransformer
+        from transformers import SiglipModel, SiglipImageProcessor
+        from mteb.models.sentence_transformer_wrapper import SentenceTransformerWrapper
+
+        if self.image_model == "clip-vit-l-14": 
+            image_model = SentenceTransformer("sentence-transformers/clip-ViT-L-14")
+        elif self.image_model == "siglip2-large-patch16-256": 
+            image_model = SiglipModel.from_pretrained("google/siglip2-large-patch16-256").to("cuda").eval()
+            siglip2_processor = SiglipImageProcessor.from_pretrained("google/siglip2-large-patch16-256")
+        else: 
+            self.image_model = None
+
+        all_image_embeddings = []
+        if isinstance(images, DataLoader):
+            with torch.no_grad():
+                for batch in tqdm(images):
+                    inputs = [to_pil_image(k) for k in batch]
+                    print("image_model: ", image_model)
+                    if isinstance(image_model, SentenceTransformer):
+                        image_outputs = self.model.encode(inputs)   
+                    elif isinstance(image_model, SiglipModel):
+                        input_image = siglip2_processor(images=inputs, return_tensors="pt").to("cuda")
+                        with torch.no_grad():
+                            image_outputs = image_model.get_image_features(**input_image)
+                    
+                    if isinstance(image_outputs, np.ndarray):
+                        all_image_embeddings.append(image_outputs)
+                    else: 
+                        all_image_embeddings.append(image_outputs.detach().cpu())
+        else:
+            with torch.no_grad():
+                for i in tqdm(range(0, len(images), batch_size)):
+                    batch_images = images[i : i + batch_size]
+                    batch_images = [
+                        img.convert("RGB")
+                        if isinstance(img, Image.Image) and img.mode != "RGB"
+                        else img
+                        for img in batch_images
+                    ]
+
+                    if isinstance(image_model, SentenceTransformer):
+                        image_outputs = self.model.encode(inputs)   
+                    elif isinstance(image_model, SiglipModel):
+                        input_image = siglip2_processor(images=inputs, return_tensors="pt").to("cuda")
+                        with torch.no_grad():
+                            image_outputs = image_model.get_image_features(**input_image)
+
+                    image_outputs = self.model.encode(batch_images)
+                    if isinstance(image_outputs, np.ndarray):
+                        all_image_embeddings.append(image_outputs)
+                    else: 
+                        all_image_embeddings.append(image_outputs.detach().cpu())
+
+        if isinstance(all_image_embeddings[0], np.ndarray):
+            all_image_embeddings = np.concatenate(all_image_embeddings, axis=0)
+        else:
+            all_image_embeddings = torch.cat(all_image_embeddings, dim=0)
+        
+        return all_image_embeddings
 
     def search(
         self,
@@ -135,6 +202,8 @@ class Any2AnyDenseRetrievalExactSearch:
         self.results = {qid: {} for qid in query_ids}
 
         q_modality = queries[0]["modality"]
+        # print("q_modality: ", q_modality)
+        # print("self.encode_kwargs: ", self.encode_kwargs) # self.encode_kwargs:  {'batch_size': 128}
 
         if q_modality == "text":
             query_texts = queries["text"]
@@ -156,12 +225,17 @@ class Any2AnyDenseRetrievalExactSearch:
                 num_workers=min(math.floor(os.cpu_count() / 2), 16),
             )
             if q_modality == "image":
-                query_embeddings = self.model.get_image_embeddings(
-                    images=query_image_dataloader,
-                    task_name=task_name,
-                    prompt_type=PromptType.query,
-                    **self.encode_kwargs,
-                )
+                if self.image_model is not None: 
+                    query_embeddings = self.encode_external_image_model(
+                        images = query_image_dataloader
+                    )
+                else: 
+                    query_embeddings = self.model.get_image_embeddings(
+                        images=query_image_dataloader,
+                        task_name=task_name,
+                        prompt_type=PromptType.query,
+                        **self.encode_kwargs,
+                    )
             elif q_modality == "image,text":
                 query_texts = queries["text"]
                 query_embeddings = self.model.get_fused_embeddings(
@@ -210,12 +284,17 @@ class Any2AnyDenseRetrievalExactSearch:
                     num_workers=min(math.floor(os.cpu_count() / 2), 16),
                 )
                 if corpus_modality == "image":
-                    sub_corpus_embeddings = self.model.get_image_embeddings(
-                        images=corpus_image_dataloader,
-                        task_name=task_name,
-                        prompt_type=PromptType.passage,
-                        **self.encode_kwargs,
-                    )
+                    if self.image_model is not None:  ## add on-the-fly encoding
+                        sub_corpus_embeddings = self.encode_external_image_model(
+                            images = corpus_image_dataloader
+                        )
+                    else: 
+                        sub_corpus_embeddings = self.model.get_image_embeddings(
+                            images=corpus_image_dataloader,
+                            task_name=task_name,
+                            prompt_type=PromptType.passage,
+                            **self.encode_kwargs,
+                        )
                 elif corpus_modality == "image,text":
                     corpus_texts = chunk["text"]
                     sub_corpus_embeddings = self.model.get_fused_embeddings(

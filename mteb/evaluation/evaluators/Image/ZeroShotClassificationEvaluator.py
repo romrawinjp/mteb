@@ -79,11 +79,15 @@ class ZeroShotClassificationEvaluator(Evaluator):
         )
 
         text_embeddings = model.get_text_embeddings(
-            self.candidate_labels, batch_size=encode_kwargs["batch_size"]
+            self.candidate_labels, 
+            task_name = self.task_name, 
+            batch_size=encode_kwargs["batch_size"]
         )
 
         image_embeddings = model.get_image_embeddings(
-            dataloader, batch_size=encode_kwargs["batch_size"]
+            dataloader, 
+            task_name = self.task_name, 
+            batch_size=encode_kwargs["batch_size"]
         )
 
         probs = model.calculate_probs(text_embeddings, image_embeddings)

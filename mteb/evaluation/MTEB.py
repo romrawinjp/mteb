@@ -435,6 +435,8 @@ class MTEB:
             datasets.logging.set_verbosity(logging.DEBUG)
 
         meta = self.create_model_meta(model)
+        meta.modalities = ["text", "image"]
+        print(f"\n🥸 Meta: {meta}")
         output_path = self.create_output_folder(meta, output_folder)
         if isinstance(model, (SentenceTransformer, CrossEncoder)):
             model = SentenceTransformerWrapper(model)
@@ -498,6 +500,7 @@ class MTEB:
 
             # NOTE: skip evaluation if the model does not support all of the task's modalities.
             # If the model covers more than the task's modalities, evaluation will still be run.
+            print(f"🧠 {task.metadata.name}")
             sorted_task_modalities = sorted(task.metadata.modalities)
             if meta.modalities is not None and any(
                 m not in meta.modalities for m in sorted_task_modalities
